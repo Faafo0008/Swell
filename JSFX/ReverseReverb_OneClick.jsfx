@@ -1,0 +1,276 @@
+desc:Reverse Reverb - 1-Click Swell (Classic Lookahead)
+// Reverse Reverb - 1-Click Swell  v1.0
+// Classic tape-trick reverse reverb in real time:
+//   capture block -> reverse -> reverb -> reverse back -> overlap-add,
+//   dry delayed by one block, latency reported to REAPER (automatic PDC),
+//   so the reverb swells INTO each note/word instead of trailing after it.
+// Put it on a track, leave "1-CLICK SWELL" ON, play. That's the whole workflow.
+// Tip: it is a mixing effect (it needs to see the future!), so don't use it
+// for live input monitoring - the lookahead latency is the swell length.
+
+slider1:swell_on=1<0,1,1{OFF,ON}>1-CLICK SWELL
+slider2:swell_sec=1.2<0.3,3.0,0.01>Swell Length (seconds)
+slider3:amount_pc=90<0,150,1>Amount %
+slider4:decay_pc=70<0,100,1>Decay %
+slider5:tone_pc=60<0,100,1>Tone % (0=dark, 100=bright)
+slider6:mix_pc=50<0,100,1>Mix %
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+// ---------- Freeverb-style tank (mono, reused per channel, reset per block) ----------
+function tankSetChannel(ch)
+  local(k, spread, len, base)
+(
+  spread = ch > 0.5 ? 23 : 0;
+  k = 0;
+  while (k < 8) (
+    len = floor((offCombBase[k] + spread) * fvScale + 0.5);
+    len < 16 ? len = 16;
+    offCombLen[k] = len;
+    offCombIdx[k] = 0;
+    offCombStore[k] = 0;
+    memset(offCombBuf + k * combStride, 0, len);
+    k += 1;
+  );
+  k = 0;
+  while (k < 4) (
+    len = floor((offApBase[k] + spread) * fvScale + 0.5);
+    len < 16 ? len = 16;
+    offApLen[k] = len;
+    offApIdx[k] = 0;
+    memset(offApBuf + k * apStride, 0, len);
+    k += 1;
+  );
+  0;
+);
+
+function tankProcess(inp)
+  local(out, k, idx, base, len, bo, v, store, inScaled)
+(
+  inScaled = inp * 0.18;
+  out = 0;
+  k = 0;
+  while (k < 8) (
+    base = offCombBuf + k * combStride;
+    len = offCombLen[k];
+    idx = offCombIdx[k];
+    bo = base[idx];
+    store = bo * (1 - fvDamp) + offCombStore[k] * fvDamp;
+    offCombStore[k] = store;
+    base[idx] = inScaled + store * fvFb;
+    idx += 1;
+    idx >= len ? idx = 0;
+    offCombIdx[k] = idx;
+    out += bo;
+    k += 1;
+  );
+  k = 0;
+  while (k < 4) (
+    base = offApBuf + k * apStride;
+    len = offApLen[k];
+    idx = offApIdx[k];
+    bo = base[idx];
+    v = out + bo * 0.5;
+    base[idx] = v;
+    idx += 1;
+    idx >= len ? idx = 0;
+    offApIdx[k] = idx;
+    out = bo - out * 0.5;
+    k += 1;
+  );
+  out * 0.22;
+);
+
+// ---------- One reversed/reverbed/re-reversed block for both channels ----------
+function processBlock()
+  local(ch, i, capBase, wetBase, startI, outStart, idxw)
+(
+  fvFb = 0.55 + decay_pc * 0.0042;
+  fvDamp = 0.85 - tone_pc * 0.0072;
+  startI = sampleCnt - blockLen + 1;
+  outStart = sampleCnt + 1;
+  ch = 0;
+  while (ch < 2) (
+    capBase = ch < 0.5 ? offCapL : offCapR;
+    wetBase = ch < 0.5 ? offWetL : offWetR;
+    i = 0;
+    while (i < blockLen) (
+      offWorkX[i] = capBase[(startI + i) & ringMask];
+      i += 1;
+    );
+    tankSetChannel(ch);
+    i = 0;
+    while (i < blockLen) (
+      offWorkYr[i] = tankProcess(offWorkX[blockLen - 1 - i]);
+      i += 1;
+    );
+    i = 0;
+    while (i < blockLen) (
+      idxw = (outStart + i) & ringMask;
+      wetBase[idxw] = wetBase[idxw] + offWorkYr[blockLen - 1 - i] * offWorkWin[i];
+      i += 1;
+    );
+    ch += 1;
+  );
+  0;
+);
+
+// ---------- (Re)configure block size / latency ----------
+function configureBlock(newB)
+  local(i)
+(
+  newB < 1024 ? newB = 1024;
+  newB > maxB - 64 ? newB = maxB - 64;
+  blockLen = newB;
+  hopLen = floor(newB / 2);
+  hopLen < 256 ? hopLen = 256;
+  memset(offCapL, 0, ringSize);
+  memset(offCapR, 0, ringSize);
+  memset(offWetL, 0, ringSize);
+  memset(offWetR, 0, ringSize);
+  i = 0;
+  while (i < blockLen) (
+    offWorkWin[i] = 0.5 - 0.5 * cos(2 * $pi * i / blockLen);
+    i += 1;
+  );
+  sampleCnt = 0;
+  pdc_delay = blockLen;
+  pdc_bot_ch = 0;
+  pdc_top_ch = 2;
+  0;
+);
+
+function updateParams()
+  local(mixn, newB)
+(
+  mixn = mix_pc * 0.01;
+  dryGain = cos(mixn * $pi * 0.5);
+  wetGain = sin(mixn * $pi * 0.5) * (amount_pc * 0.01) * 2.2;
+  newB = floor(swell_sec * srate / 2) * 2;
+  abs(newB - blockLen) > 64 ? configureBlock(newB);
+  0;
+);
+
+// ---------- Memory layout ----------
+maxB = floor(3.1 * srate) + 64;
+ringSize = 1;
+while (ringSize < maxB * 4) ( ringSize *= 2; );
+ringMask = ringSize - 1;
+combStride = 16384;
+apStride = 8192;
+
+offCapL = 0;
+offCapR = offCapL + ringSize;
+offWetL = offCapR + ringSize;
+offWetR = offWetL + ringSize;
+offWorkX = offWetR + ringSize;
+offWorkYr = offWorkX + maxB;
+offWorkWin = offWorkYr + maxB;
+offCombBase = offWorkWin + maxB;
+offApBase = offCombBase + 16;
+offCombLen = offApBase + 16;
+offCombIdx = offCombLen + 16;
+offCombStore = offCombIdx + 16;
+offApLen = offCombStore + 16;
+offApIdx = offApLen + 16;
+offCombBuf = offApIdx + 16;
+offApBuf = offCombBuf + 8 * combStride;
+totalMem = offApBuf + 4 * apStride;
+memset(0, 0, totalMem);
+
+offCombBase[0] = 1116; offCombBase[1] = 1188; offCombBase[2] = 1277; offCombBase[3] = 1356;
+offCombBase[4] = 1422; offCombBase[5] = 1491; offCombBase[6] = 1557; offCombBase[7] = 1617;
+offApBase[0] = 556; offApBase[1] = 441; offApBase[2] = 341; offApBase[3] = 225;
+
+fvScale = srate / 44100;
+fvFb = 0.84;
+fvDamp = 0.42;
+blockLen = 0;
+sampleCnt = 0;
+prevMouse = 0;
+configureBlock(floor(swell_sec * srate / 2) * 2);
+updateParams();
+
+@slider
+updateParams();
+
+@sample
+wp = sampleCnt & ringMask;
+offCapL[wp] = spl0;
+offCapR[wp] = spl1;
+
+dryL = 0;
+dryR = 0;
+dryIdx = sampleCnt - blockLen;
+dryIdx >= 0 ? (
+  dryPos = dryIdx & ringMask;
+  dryL = offCapL[dryPos];
+  dryR = offCapR[dryPos];
+);
+
+wetL = offWetL[wp];
+wetR = offWetR[wp];
+offWetL[wp] = 0;
+offWetR[wp] = 0;
+
+swell_on > 0.5 ? (
+  spl0 = dryL * dryGain + wetL * wetGain;
+  spl1 = dryR * dryGain + wetR * wetGain;
+) : (
+  spl0 = dryL;
+  spl1 = dryR;
+);
+
+// gentle safety knee so huge swells cannot clip harshly
+spl0 > 0.95 ? spl0 = 0.95 + 0.25 * tanh((spl0 - 0.95) * 4);
+spl0 < -0.95 ? spl0 = -0.95 - 0.25 * tanh((-spl0 - 0.95) * 4);
+spl1 > 0.95 ? spl1 = 0.95 + 0.25 * tanh((spl1 - 0.95) * 4);
+spl1 < -0.95 ? spl1 = -0.95 - 0.25 * tanh((-spl1 - 0.95) * 4);
+
+sinceStart = sampleCnt + 1 - blockLen;
+sinceStart >= 0 ? (
+  (sinceStart % hopLen) == 0 ? processBlock();
+);
+sampleCnt += 1;
+
+@gfx 480 160
+gfx_r = 0.06; gfx_g = 0.05; gfx_b = 0.12; gfx_a = 1;
+gfx_rect(0, 0, gfx_w, gfx_h);
+
+bx = (gfx_w - 340) / 2;
+by = 22;
+bw = 340;
+bh = 58;
+swell_on > 0.5 ? (
+  gfx_r = 0.45; gfx_g = 0.25; gfx_b = 0.95;
+) : (
+  gfx_r = 0.18; gfx_g = 0.16; gfx_b = 0.30;
+);
+gfx_a = 1;
+gfx_rect(bx, by, bw, bh);
+
+gfx_r = 1; gfx_g = 1; gfx_b = 1; gfx_a = 1;
+gfx_setfont(1, "Arial", 24);
+gfx_x = bx + 28;
+gfx_y = by + 17;
+gfx_drawstr(swell_on > 0.5 ? "REVERSE SWELL : ON" : "CLICK FOR REVERSE SWELL");
+
+gfx_setfont(2, "Arial", 15);
+gfx_r = 0.75; gfx_g = 0.75; gfx_b = 0.88;
+gfx_x = 18;
+gfx_y = 100;
+gfx_drawstr("Classic lookahead reverse reverb - swells INTO the note. Mixing effect (not for live monitoring).");
+gfx_x = 18;
+gfx_y = 122;
+gfx_drawstr("Start: leave ON, press play. Then try Swell 0.8-1.6s for vocals, 0.3-0.6s for snare.");
+
+mdown = (mouse_cap & 1) > 0 ? 1 : 0;
+(mdown > 0.5 && prevMouse < 0.5 && mouse_x >= bx && mouse_x < bx + bw && mouse_y >= by && mouse_y < by + bh) ? (
+  swell_on = swell_on > 0.5 ? 0 : 1;
+  sliderchange(1);
+);
+prevMouse = mdown;

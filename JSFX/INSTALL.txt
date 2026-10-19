@@ -1,0 +1,21 @@
+REVERSE REVERB - 1-CLICK SWELL (JSFX version)  -  INSTALL IN 60 SECONDS
+========================================================================
+
+1. In REAPER:  Options menu  >  "Show REAPER resource path in explorer/finder"
+2. Open the "Effects" folder inside there.
+3. Copy  ReverseReverb_OneClick.jsfx  into that Effects folder.
+4. Back in REAPER, open any track's FX window, click Add, and search:
+       Reverse Reverb
+   (it appears under JS. If it's not there, press F5 in the FX browser to rescan.)
+5. Add it to a vocal/snare/guitar track, leave "1-CLICK SWELL" ON, press play.
+
+Done. No licence, no installer, works on Windows/Mac/Linux.
+
+Want it as a send (recommended for vocals)?
+  Create a new track called "Swell", add this plugin there, set Mix to 100,
+  then send your vocal track to it pre- or post-fader and blend the Swell fader.
+
+Important: this is a MIXING effect. It looks ahead by the Swell Length
+(default 1.2 seconds) so do not monitor live input through it while recording.
+REAPER compensates the timing automatically on playback (PDC), so your mix
+stays perfectly in time.

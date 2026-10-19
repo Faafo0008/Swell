@@ -1,0 +1,17 @@
+latency = 57600 samples (1.20 sec) -> dry notes appear in output at 3.20s and 6.70s
+output peak = 0.740
+
+RMS before first note (note itself at 3.20s):
+  t= 2.0s  dry=0.00000   processed=0.00000 
+  t= 2.2s  dry=0.00000   processed=0.00000 
+  t= 2.4s  dry=0.00000   processed=0.00139 
+  t= 2.6s  dry=0.00000   processed=0.00847  <-- PRE-SWELL (dry is still silent)
+  t= 2.8s  dry=0.00000   processed=0.06078  <-- PRE-SWELL (dry is still silent)
+  t= 3.0s  dry=0.00000   processed=0.15792 
+  t= 3.2s  dry=0.35329   processed=0.27914 
+  t= 3.4s  dry=0.19959   processed=0.16349 
+
+RESULT: 1s before note: dry RMS=0.000000, processed RMS=0.075772 -> PASS: swell precedes the note
+wrote Demo/demo_dry.wav
+wrote Demo/demo_reverse_reverb.wav
+wrote Demo/scope_peaks.csv (2400 scope columns)
